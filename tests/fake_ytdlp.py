@@ -20,7 +20,7 @@ if "--cookies-from-browser" in sys.argv and "chrome" in sys.argv:
     if not resolving and "chrome-encrypted" in url:
         print("ERROR: Failed to decrypt with DPAPI.")
         raise SystemExit(1)
-    if "chrome-empty" in url:
+    if "chrome-empty" in url and "--no-quiet" in sys.argv:
         print("[Cookies] Extracted 0 cookies from chrome (4 could not be decrypted)")
 if "needs-login" in url and "--cookies-from-browser" not in sys.argv and "--cookies" not in sys.argv:
     print("ERROR: Sign in to confirm your age. Use cookies.", flush=True)
