@@ -113,8 +113,9 @@ function renderJobs() {
     }
     $('.progress-detail', row).textContent = details.join(' · ');
     $('.progress-percent', row).textContent = job.status === 'downloading' && job.total ? `${Math.floor(percent)}%` : '';
-    $('.job-error', row).textContent = job.error || '';
-    $('.job-error', row).hidden = !job.error;
+    const messages = [job.cookie_warning, job.error].filter(Boolean);
+    $('.job-error', row).textContent = messages.join('\n\n');
+    $('.job-error', row).hidden = messages.length === 0;
     if (previous !== job.status) {
       const actions = $('.job-actions', row);
       actions.replaceChildren();

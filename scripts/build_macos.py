@@ -120,8 +120,8 @@ def main():
     info.update(
         {
             "CFBundleDisplayName": "Батя качает",
-            "CFBundleShortVersionString": "1.1.1",
-            "CFBundleVersion": "1.1.1",
+            "CFBundleShortVersionString": "1.1.2",
+            "CFBundleVersion": "1.1.2",
             "LSMinimumSystemVersion": platform.mac_ver()[0],
             "NSHighResolutionCapable": True,
         }

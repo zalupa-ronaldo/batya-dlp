@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -317,7 +318,7 @@ class DownloadManager:
             with self.lock:
                 self.update = {"busy": False, "message": f"Не удалось обновить yt-dlp: {exc}", "error": True}
 
-    def _arguments(self, job: dict) -> list[str]:
+    def _arguments(self, job: dict, authentication: list[str]) -> list[str]:
         args = self.command + [
             "--ignore-config",
             "--no-plugin-dirs",
@@ -358,7 +359,7 @@ class DownloadManager:
             args += ["--ffmpeg-location", str(ffmpeg.parent)]
         if deno.exists():
             args += ["--js-runtimes", f"deno:{deno}"]
-        args += self._authentication()
+        args += authentication
         if job["quality"] == "audio":
             args += ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K"]
         else:
@@ -368,7 +369,9 @@ class DownloadManager:
             args += ["--format", formats, "--merge-output-format", "mp4", "--remux-video", "mp4"]
         return args + ["--", job["url"]]
 
-    def _authentication(self) -> list[str]:
+    def _authentication(self, job: dict) -> list[str]:
+        if job.get("cookie_warning"):
+            return []
         with self.lock:
             browser = self.settings.get("browser", "none")
             filename = self.settings.get("cookies_file", "")
@@ -376,6 +379,19 @@ class DownloadManager:
             # yt-dlp may refresh this user-selected cookie jar; it never enters state.json or logs.
             return ["--cookies", filename]
         return ["--cookies-from-browser", browser] if browser in BROWSERS - {"none", "file"} else []
+
+    @staticmethod
+    def _chrome_cookie_problem(authentication: list[str], line: str) -> str:
+        if authentication != ["--cookies-from-browser", "chrome"]:
+            return ""
+        message = line.lower()
+        if "could not copy chrome cookie database" in message:
+            return "Не удалось прочитать cookies Chrome. Полностью закройте Chrome и попробуйте снова."
+        if "could not find chrome cookies database" in message:
+            return "Не найдена база cookies Chrome. Проверьте, что вы вошли на сайт в Chrome."
+        if "failed to decrypt with dpapi" in message or re.search(r"\bextracted 0 cookies from chrome\b", message):
+            return "Сессия Chrome недоступна. Для входа используйте Firefox или файл cookies.txt."
+        return ""
 
     def _resolve(self, job: dict):
         if job.get("resolved"):
@@ -387,7 +403,6 @@ class DownloadManager:
             "--dump-single-json",
             "--yes-playlist",
             "--skip-download",
-            "--no-warnings",
             "--encoding",
             "utf-8",
             "--socket-timeout",
@@ -398,7 +413,8 @@ class DownloadManager:
         deno = tools_directory() / tool_filename("deno")
         if deno.exists():
             args += ["--js-runtimes", f"deno:{deno}"]
-        args += self._authentication() + ["--", job["url"]]
+        authentication = self._authentication(job)
+        args += authentication + ["--", job["url"]]
         with self.lock:
             if job["status"] == "cancelled" or self.stopping.is_set():
                 return
@@ -414,6 +430,7 @@ class DownloadManager:
             self.process = process
         metadata = None
         tail = deque(maxlen=8)
+        cookie_problem = ""
         for line in process.stdout:
             if len(line) > 50_000_000:
                 terminate_tree(process)
@@ -422,7 +439,16 @@ class DownloadManager:
                 metadata = json.loads(line)
             elif line.strip():
                 tail.append(line.strip())
+                cookie_problem = self._chrome_cookie_problem(authentication, line) or cookie_problem
         code = process.wait()
+        with self.lock:
+            if job["status"] == "cancelled" or self.stopping.is_set():
+                return
+            if cookie_problem:
+                job["cookie_warning"] = cookie_problem + " Пробуем без входа."
+                job["note"] = "Проверяем ссылку без входа…"
+        if cookie_problem and (code or not isinstance(metadata, dict)):
+            return self._resolve(job)
         with self.lock:
             if job["status"] == "cancelled" or self.stopping.is_set():
                 return
@@ -501,7 +527,7 @@ class DownloadManager:
                 LOG.exception("Could not resolve URL")
                 with self.lock:
                     if job["status"] != "cancelled":
-                        job.update(status="error", error=self._friendly_error(str(exc)))
+                        job.update(status="error", error=self._friendly_error(str(exc), job))
             with self.lock:
                 self.current_id = None
                 self.process = None
@@ -537,9 +563,14 @@ class DownloadManager:
             LOG.warning("Unrecognized yt-dlp event: %s", prefix)
 
     @staticmethod
-    def _friendly_error(details: str) -> str:
+    def _friendly_error(details: str, job: dict) -> str:
         text = details.lower()
         if "403" in text or "sign in" in text or "cookies" in text or "login" in text:
+            if job.get("cookie_warning"):
+                return (
+                    "Без входа сайт не дал скачать видео. В блоке «Доступ к сайтам» выберите Firefox, "
+                    "где вы вошли на сайт, или файл cookies.txt и нажмите «Повторить».\n\n" + details
+                )
             return (
                 "Сайт ограничил доступ к видео. В блоке «Доступ к сайтам» выберите браузер, "
                 "в котором видео открывается, или файл cookies.txt, затем нажмите «Повторить».\n\n" + details
@@ -548,11 +579,13 @@ class DownloadManager:
 
     def _download(self, job: dict, attempt: int = 0):
         tail = deque(maxlen=12)
+        cookie_problem = ""
         try:
             with self.lock:
                 if job["status"] == "cancelled" or self.stopping.is_set():
                     return
-                arguments = self._arguments(job)
+                authentication = self._authentication(job)
+                arguments = self._arguments(job, authentication)
                 if attempt:
                     arguments[len(self.command) : len(self.command)] = ["--force-ipv4"]
                     if "--format" in arguments:
@@ -580,8 +613,19 @@ class DownloadManager:
                     self._line(job, line)
                 elif line:
                     tail.append(line)
+                    cookie_problem = self._chrome_cookie_problem(authentication, line) or cookie_problem
             result = process.wait()
             details = "\n".join(tail)[-3000:]
+            with self.lock:
+                if job["status"] == "cancelled" or self.stopping.is_set():
+                    return
+                if cookie_problem:
+                    job["cookie_warning"] = cookie_problem + " Пробуем без входа."
+                    if result != 0:
+                        job.update(status="starting", note="Повторяем без входа…")
+            if cookie_problem and result != 0:
+                self._download(job, attempt=attempt)
+                return
             with self.lock:
                 retry = (
                     result != 0
@@ -601,7 +645,7 @@ class DownloadManager:
                 if result != 0:
                     job.update(
                         status="error",
-                        error=self._friendly_error(details),
+                        error=self._friendly_error(details, job),
                     )
                 elif not job["filename"] or not Path(job["filename"]).is_file():
                     job.update(status="error", error="Загрузка завершилась, но готовый файл не найден.")

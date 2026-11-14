@@ -101,6 +101,26 @@ def test_failed_download_has_details(client, manager):
     assert "unavailable" in result["error"]
 
 
+@pytest.mark.parametrize("path", ["chrome-locked", "chrome-encrypted", "chrome-empty"])
+def test_unreadable_chrome_cookies_do_not_block_public_download(client, manager, path):
+    manager.save_settings(manager.settings["folder"], "1080", browser="chrome")
+    submitted = client.post("/api/jobs", json={"url": f"https://example.com/{path}"}).json()
+    job = wait_for(manager, submitted["id"], {"completed", "error"})
+
+    assert job["status"] == "completed", job
+    assert "Chrome" in job["cookie_warning"] and "без входа" in job["cookie_warning"]
+    assert manager.snapshot()["settings"]["browser"] == "chrome"
+
+
+def test_private_video_explains_options_when_chrome_cookies_cannot_be_read(client, manager):
+    manager.save_settings(manager.settings["folder"], "1080", browser="chrome")
+    submitted = client.post("/api/jobs", json={"url": "https://example.com/chrome-locked-needs-login"}).json()
+    job = wait_for(manager, submitted["id"], {"error"})
+
+    assert "Chrome" in job["cookie_warning"]
+    assert "Firefox" in job["error"] and "cookies.txt" in job["error"]
+
+
 @pytest.mark.parametrize(
     "url",
     [

@@ -12,10 +12,20 @@ if "--version" in sys.argv:
     raise SystemExit
 
 url = sys.argv[-1]
+resolving = "--dump-single-json" in sys.argv
+if "--cookies-from-browser" in sys.argv and "chrome" in sys.argv:
+    if resolving and "chrome-locked" in url:
+        print("ERROR: Could not copy Chrome cookie database.")
+        raise SystemExit(1)
+    if not resolving and "chrome-encrypted" in url:
+        print("ERROR: Failed to decrypt with DPAPI.")
+        raise SystemExit(1)
+    if "chrome-empty" in url:
+        print("[Cookies] Extracted 0 cookies from chrome (4 could not be decrypted)")
 if "needs-login" in url and "--cookies-from-browser" not in sys.argv and "--cookies" not in sys.argv:
     print("ERROR: Sign in to confirm your age. Use cookies.", flush=True)
     raise SystemExit(1)
-if "--dump-single-json" in sys.argv:
+if resolving:
     if "playlist" in url:
         print(
             json.dumps(
