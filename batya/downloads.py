@@ -336,6 +336,7 @@ class DownloadManager:
             "3",
             "--fragment-retries",
             "3",
+            "--abort-on-unavailable-fragments",
             "--http-chunk-size",
             "10M",
             "--cache-dir",
