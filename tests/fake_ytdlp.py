@@ -5,6 +5,8 @@ import sys
 import time
 from pathlib import Path
 
+sys.stdout.reconfigure(encoding="utf-8")
+
 if "--version" in sys.argv:
     print("2026.11.14-test")
     raise SystemExit

@@ -12,3 +12,4 @@ tools/
 .DS_Store
 *.log
 *.egg-info/
+.playwright-cli/
