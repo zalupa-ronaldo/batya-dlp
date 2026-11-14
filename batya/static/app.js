@@ -198,6 +198,7 @@ $('#paste').addEventListener('click', async () => {
 
 async function saveFolder() {
   const result = await api('settings', {folder: $('#folder').value.trim(), quality: $('#quality').value});
+  if (state) state.settings = result;
   $('#folder').value = result.folder;
   $('#folder').title = result.folder;
   toast('Папка сохранена');
@@ -229,7 +230,7 @@ bind('#quit', async () => {
 });
 $('#quality').addEventListener('change', async () => {
   if (!state) return;
-  try {await api('settings', {folder: state.settings.folder, quality: $('#quality').value});}
+  try {state.settings = await api('settings', {folder: state.settings.folder, quality: $('#quality').value});}
   catch (error) {toast(error.message, true);}
 });
 document.querySelectorAll('.filter').forEach(element => element.addEventListener('click', () => {

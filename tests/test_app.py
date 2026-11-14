@@ -182,4 +182,4 @@ def test_corrupt_state_is_preserved(tmp_path):
     manager = DownloadManager(tmp_path, command=[sys.executable])
     assert manager.snapshot()["jobs"] == []
     assert len(list(tmp_path.glob("state.damaged-*.json"))) == 1
-    assert json.loads(json.dumps(manager.snapshot()))["app_version"] == "1.0.0"
+    assert json.loads(json.dumps(manager.snapshot()))["app_version"] == "1.0.1"
