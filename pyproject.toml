@@ -14,9 +14,14 @@ dependencies = ["fastapi==0.162.7", "uvicorn==0.54.0", "certifi==2026.10.23"]
 [project.optional-dependencies]
 dev = ["pytest==9.2.0", "httpx==0.28.1", "ruff==0.17.5", "yt-dlp[default]>=2026.8.19"]
 build = ["pyinstaller==6.22.3"]
+telegram = ["httpx==0.28.1", "yt-dlp[default]>=2026.10.26"]
 
 [project.scripts]
 batya-dlp = "batya.launcher:main"
+batya-telegram = "batya.telegram_bot:main"
+
+[tool.setuptools.packages.find]
+include = ["batya"]
 
 [tool.setuptools.package-data]
 batya = ["static/*"]
