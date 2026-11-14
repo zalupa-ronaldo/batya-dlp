@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f6f2">
+  <title>Батя качает — видео под рукой</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h7l2 3h9v12H3V7Z"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7V5Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 14 4-4m-6 6-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 2 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 -1)"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-3l2 3M4 16l2 3a8 8 0 0 0 13-3"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 9 5 3-5 3V9Z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v10M6 5a9 9 0 1 0 12 0"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l11-2v13M9 8l11-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="17" cy="16" rx="3" ry="3"/></symbol>
+</svg>
+<div class="page">
+  <header class="header">
+    <a class="brand" href="/" aria-label="Батя качает, главная">
+      <span class="brand-mark"><svg class="icon"><use href="#i-download"/></svg></span>
+      <span>батя качает<span class="brand-caption">ВИДЕО ПОД РУКОЙ</span></span>
+    </a>
+    <div class="header-actions">
+      <span class="local-status" id="connection"><span class="status-dot"></span><span id="connection-text">На вашем компьютере</span></span>
+      <button class="icon-button quit" id="quit" title="Закрыть приложение" aria-label="Закрыть приложение"><svg class="icon"><use href="#i-power"/></svg></button>
+    </div>
+  </header>
+
+  <main>
+    <div class="intro">
+      <div><p class="eyebrow">БЕЗ ЛИШНИХ СЛОЖНОСТЕЙ</p><h1>Нашли видео?<br><span>Заберите с собой.</span></h1><p class="intro-text">Вставьте ссылку, скачайте и смотрите в удобное время.</p></div>
+      <div class="hero-art" aria-hidden="true"><div class="art-orbit"></div><div class="art-window"><div class="art-dots"><i></i><i></i><i></i></div><div class="art-mountains"><div class="mountain one"></div><div class="mountain two"></div><div class="sun"></div><span class="art-play"><svg class="icon"><use href="#i-play"/></svg></span></div><div class="art-line"></div></div><div class="art-badge"><svg class="icon"><use href="#i-check"/></svg> Уже на компьютере</div></div>
+    </div>
+
+    <div class="workspace">
+      <div class="main-column">
+        <section class="download-card" aria-labelledby="download-heading">
+          <div class="section-kicker"><span class="step-number">1</span><h2 id="download-heading">Ссылка на видео</h2></div>
+          <form id="download-form">
+            <label class="sr-only" for="url">Ссылка на видео</label>
+            <div class="url-field"><svg class="icon"><use href="#i-link"/></svg><input id="url" name="url" type="url" placeholder="https://youtube.com/watch?v=…" required autocomplete="off" spellcheck="false" maxlength="8192"><button id="paste" class="paste-button" type="button">Вставить</button></div>
+            <div class="download-bottom"><div class="quality-field"><label for="quality">Качество</label><select id="quality" name="quality"><option value="1080">1080p · Рекомендуем</option><option value="720">720p · Меньше размер</option><option value="best">Максимальное</option><option value="audio">Только звук · MP3</option></select></div><button class="button primary" type="submit" id="download-button"><svg class="icon"><use href="#i-download"/></svg><span>Скачать видео</span></button></div>
+          </form>
+          <p class="form-hint">YouTube, VK, Rutube и другие сайты, которые поддерживает yt-dlp.<br>Скачается одно видео, даже если ссылка ведёт на плейлист.</p>
+        </section>
+
+        <section class="library" aria-labelledby="library-heading">
+          <div class="library-heading"><h2 id="library-heading">Ваши загрузки <span class="count" id="total-count">0</span></h2><div class="filters" aria-label="Фильтр загрузок"><button class="filter active" data-filter="all" aria-pressed="true">Все</button><button class="filter" data-filter="completed" aria-pressed="false">Готовые</button></div></div>
+          <div id="jobs" aria-live="off"></div>
+          <div id="empty" class="empty"><span class="empty-icon"><svg class="icon"><use href="#i-video"/></svg></span><h3>Здесь будут ваши видео</h3><p>Скачайте первое — и оно всегда будет под рукой.<br>Готовое видео можно открыть одним нажатием.</p></div>
+        </section>
+      </div>
+
+      <aside class="sidebar">
+        <section class="settings-card" aria-labelledby="folder-heading">
+          <span class="side-icon"><svg class="icon"><use href="#i-folder"/></svg></span><h2 id="folder-heading">Куда сохранять</h2><p class="side-description">Все новые видео попадут в эту папку.</p>
+          <label for="folder" class="sr-only">Папка для скачивания</label><input id="folder" type="text" class="folder-input" spellcheck="false" aria-describedby="folder-help"><p id="folder-help" class="tiny">Выберите папку или впишите путь.</p>
+          <div class="folder-actions"><button class="button secondary" id="pick-folder">Выбрать папку</button><button class="button save-button" id="save-folder" title="Сохранить путь к папке" aria-label="Сохранить путь к папке"><svg class="icon"><use href="#i-check"/></svg></button></div>
+          <button class="text-button" id="open-folder">Открыть папку <svg class="icon"><use href="#i-arrow"/></svg></button>
+        </section>
+        <section class="update-card" aria-labelledby="update-heading"><div class="update-title"><span class="tool-dot"></span><h2 id="update-heading">Движок загрузки</h2></div><p class="version-label">yt-dlp <span id="yt-version">…</span></p><p class="side-description">Если видео перестало скачиваться, попробуйте обновить.</p><button class="button update-button" id="update"><svg class="icon"><use href="#i-refresh"/></svg><span>Обновить yt-dlp</span></button><p id="update-message" class="update-message" role="status"></p></section>
+        <div class="privacy-note"><svg class="icon"><use href="#i-shield"/></svg><p>Видео и настройки хранятся<br>только на вашем компьютере.</p></div>
+      </aside>
+    </div>
+  </main>
+
+  <footer><span>Меньше кнопок. Больше хорошего видео.</span><span>Батя качает <span id="app-version">1.0.0</span> <span class="footer-dot">·</span> Open source</span></footer>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<div id="closed" class="closed" hidden><div><span class="brand-mark"><svg class="icon"><use href="#i-check"/></svg></span><h1>До следующего видео!</h1><p>Приложение закрыто. Эту вкладку тоже можно закрыть.</p><p class="tiny">Чтобы вернуться, запустите Batya.exe.</p></div></div>
+<template id="job-template"><article class="job"><div class="job-top"><span class="job-icon"><svg class="icon"><use href="#i-video"/></svg></span><div class="job-info"><h3 class="job-title"></h3><p class="job-meta"></p></div><span class="job-status"></span></div><div class="progress-region"><div class="progress-track" role="progressbar" aria-label="Прогресс загрузки" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill"></div></div><div class="progress-info"><span class="progress-detail"></span><span class="progress-percent"></span></div></div><p class="job-error"></p><div class="job-actions"></div></article></template>
+</body>
+</html>

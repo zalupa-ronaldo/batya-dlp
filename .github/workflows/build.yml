@@ -1,0 +1,59 @@
+name: Test and build Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check .
+      - run: python -m pytest -v
+
+  windows:
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -e ".[dev,build]"
+      - run: python scripts/build_windows.py
+      - name: Test actual portable EXE and bundled tools
+        run: python scripts/smoke.py --exe dist/BatyaDLP/Batya.exe
+      - run: python scripts/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BatyaDLP-Windows-x64
+          path: |
+            dist/BatyaDLP-Windows-x64.zip
+            dist/SHA256SUMS.txt
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" dist/BatyaDLP-Windows-x64.zip dist/SHA256SUMS.txt --verify-tag --title "Батя качает $env:GITHUB_REF_NAME" --notes-file .github/release-notes.md
