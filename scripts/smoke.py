@@ -42,10 +42,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", type=Path)
     args = parser.parse_args()
-    exe = args.exe.resolve() if args.exe else None
+    bundle = args.exe.resolve() if args.exe and args.exe.suffix == ".app" else None
+    exe = bundle / "Contents/MacOS/Batya" if bundle else args.exe.resolve() if args.exe else None
     command = [str(exe)] if exe else [sys.executable, "-m", "batya"]
-    ffmpeg = exe.parent / "tools/ffmpeg.exe" if exe else shutil.which("ffmpeg")
-    ffprobe = exe.parent / "tools/ffprobe.exe" if exe else shutil.which("ffprobe")
+    tools = bundle / "Contents/Frameworks/tools" if bundle else exe.parent / "tools" if exe else None
+    suffix = "" if bundle else ".exe"
+    ffmpeg = tools / ("ffmpeg" + suffix) if tools else shutil.which("ffmpeg")
+    ffprobe = tools / ("ffprobe" + suffix) if tools else shutil.which("ffprobe")
     if not ffmpeg or not ffprobe:
         raise SystemExit("Install FFmpeg or test the complete packaged directory.")
     with tempfile.TemporaryDirectory(prefix="batya smoke ") as temp:
@@ -81,6 +84,8 @@ def main():
         fixture = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(source)))
         threading.Thread(target=fixture.serve_forever, daemon=True).start()
         env = {**os.environ, "BATYA_DATA_DIR": str(data)}
+        if bundle:
+            env["PATH"] = "/usr/bin:/bin"
         process = subprocess.Popen(command + ["--headless"], cwd=ROOT, env=env)
         try:
             info = wait_info(data, process)
@@ -141,6 +146,29 @@ def main():
             assert download("720")["filename"] == video["filename"], "Existing file/retry behavior"
             audio = download("audio")
             assert Path(audio["filename"]).suffix == ".mp3"
+            items = []
+            for index in range(1, 4):
+                shutil.copy2(source / "sample.mp4", source / f"sample-{index}.mp4")
+                media = f"http://127.0.0.1:{fixture.server_port}/sample-{index}.mp4"
+                items.append(
+                    f'<item><title>Видео {index}</title><enclosure url="{media}" type="video/mp4" length="11369"/></item>'
+                )
+            (source / "playlist.rss").write_text(
+                '<?xml version="1.0"?><rss version="2.0"><channel><title>Мой плейлист</title>'
+                + "".join(items)
+                + "</channel></rss>",
+                encoding="utf-8",
+            )
+            api("jobs", {"url": f"http://127.0.0.1:{fixture.server_port}/playlist.rss", "quality": "720"})
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                jobs = api("state")["jobs"]
+                assert sum(j["status"] in {"starting", "downloading", "processing"} for j in jobs) <= 1
+                if len(jobs) == 6 and all(j["status"] in {"completed", "error"} for j in jobs):
+                    break
+                time.sleep(0.1)
+            assert len(jobs) == 6 and all(j["status"] == "completed" for j in jobs), jobs
+            assert sum(bool(j.get("playlist_url")) for j in jobs) == 3
             second = subprocess.run(command + ["--headless"], cwd=ROOT, env=env, timeout=15)
             assert second.returncode == 0
             assert api("state")["settings"]["folder"] == str(output.resolve())
@@ -153,14 +181,14 @@ def main():
             session = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
             session.open(info["url"], timeout=10).close()
             recovered = api("state")
-            assert len(recovered["jobs"]) == 3
+            assert len(recovered["jobs"]) == 6
             assert all(j["status"] == "completed" for j in recovered["jobs"])
             assert recovered["settings"]["quality"] == "720"
             api("quit", {})
             process.wait(timeout=30)
             assert process.returncode == 0
             print(
-                "PASS: startup, auth, Cyrillic paths, real MP4, repeat, MP3 conversion, single instance, restart, history, exit"
+                "PASS: startup, auth, Cyrillic paths, real MP4, MP3, sequential playlist, single instance, restart, history, exit"
             )
         except BaseException:
             log = data / "app.log"

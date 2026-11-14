@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from batya.downloads import DownloadManager
-from batya.system import select_folder
+from batya.system import select_cookie_file, select_folder
 
 
 class DownloadInput(BaseModel):
@@ -25,6 +25,8 @@ class DownloadInput(BaseModel):
 class SettingsInput(BaseModel):
     folder: str = Field(min_length=1, max_length=4096)
     quality: Literal["1080", "720", "best", "audio"] = "1080"
+    browser: Literal["none", "chrome", "firefox", "edge", "brave", "safari", "file"] | None = None
+    cookies_file: str | None = Field(default=None, max_length=4096)
 
 
 def create_app(manager: DownloadManager, origin: str, token: str | None = None) -> FastAPI:
@@ -50,9 +52,7 @@ def create_app(manager: DownloadManager, origin: str, token: str | None = None) 
         if request.url.path.startswith("/api/"):
             supplied = request.cookies.get(cookie, "")
             if not hmac.compare_digest(supplied.encode(), secret.encode()):
-                return JSONResponse(
-                    {"detail": "Запустите приложение двойным кликом по Batya.exe."}, status_code=401
-                )
+                return JSONResponse({"detail": "Запустите приложение двойным кликом."}, status_code=401)
             if request.headers.get("sec-fetch-site") == "cross-site":
                 return JSONResponse({"detail": "Запрос с другого сайта запрещён."}, status_code=403)
             if request.method != "GET" and request.headers.get("origin", origin) != origin:
@@ -76,7 +76,7 @@ def create_app(manager: DownloadManager, origin: str, token: str | None = None) 
 
     @app.exception_handler(OSError)
     async def os_error(request: Request, exc: OSError):
-        return JSONResponse({"detail": f"Windows не смог выполнить действие: {exc}"}, status_code=400)
+        return JSONResponse({"detail": f"Не удалось выполнить действие: {exc}"}, status_code=400)
 
     @app.get("/")
     def index(request: Request):
@@ -87,9 +87,7 @@ def create_app(manager: DownloadManager, origin: str, token: str | None = None) 
             return response
         supplied = request.cookies.get(cookie, "")
         if not hmac.compare_digest(supplied.encode(), secret.encode()):
-            return PlainTextResponse(
-                "Откройте Batya.exe двойным кликом, чтобы войти в приложение.", status_code=401
-            )
+            return PlainTextResponse("Откройте приложение двойным кликом, чтобы войти.", status_code=401)
         return FileResponse(static / "index.html")
 
     @app.get("/api/state")
@@ -122,7 +120,11 @@ def create_app(manager: DownloadManager, origin: str, token: str | None = None) 
 
     @app.post("/api/settings")
     def settings(body: SettingsInput):
-        return manager.save_settings(body.folder, body.quality)
+        return manager.save_settings(body.folder, body.quality, body.browser, body.cookies_file)
+
+    @app.post("/api/cookies/pick")
+    def cookies_pick():
+        return {"file": select_cookie_file()}
 
     @app.post("/api/folder/pick")
     def folder_pick():

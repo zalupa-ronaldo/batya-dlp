@@ -51,7 +51,7 @@
             <div class="url-field"><svg class="icon"><use href="#i-link"/></svg><input id="url" name="url" type="url" placeholder="https://youtube.com/watch?v=…" required autocomplete="off" spellcheck="false" maxlength="8192"><button id="paste" class="paste-button" type="button">Вставить</button></div>
             <div class="download-bottom"><div class="quality-field"><label for="quality">Качество</label><select id="quality" name="quality"><option value="1080">1080p · Рекомендуем</option><option value="720">720p · Меньше размер</option><option value="best">Максимальное</option><option value="audio">Только звук · MP3</option></select></div><button class="button primary" type="submit" id="download-button"><svg class="icon"><use href="#i-download"/></svg><span>Скачать видео</span></button></div>
           </form>
-          <p class="form-hint">YouTube, VK, Rutube и другие сайты, которые поддерживает yt-dlp.<br>Скачается одно видео, даже если ссылка ведёт на плейлист.</p>
+          <p class="form-hint">YouTube, VK, Rutube и другие сайты, которые поддерживает yt-dlp.<br>Ссылка на плейлист? Ролики автоматически скачаются по очереди.</p>
         </section>
 
         <section class="library" aria-labelledby="library-heading">
@@ -69,15 +69,16 @@
           <button class="text-button" id="open-folder">Открыть папку <svg class="icon"><use href="#i-arrow"/></svg></button>
         </section>
         <section class="update-card" aria-labelledby="update-heading"><div class="update-title"><span class="tool-dot"></span><h2 id="update-heading">Движок загрузки</h2></div><p class="version-label">yt-dlp <span id="yt-version">…</span></p><p class="side-description">Если видео перестало скачиваться, попробуйте обновить.</p><button class="button update-button" id="update"><svg class="icon"><use href="#i-refresh"/></svg><span>Обновить yt-dlp</span></button><p id="update-message" class="update-message" role="status"></p></section>
+        <section class="update-card" aria-labelledby="auth-heading"><div class="update-title"><svg class="icon"><use href="#i-shield"/></svg><h2 id="auth-heading">Доступ к сайтам</h2></div><p class="side-description">Если сайт просит вход, используйте сессию браузера, где видео открывается.</p><label for="browser" class="tiny">Брать cookies из</label><select id="browser" class="folder-input"><option value="none">Без входа</option><option value="chrome">Google Chrome</option><option value="firefox">Firefox</option><option value="edge">Microsoft Edge</option><option value="brave">Brave</option><option value="safari">Safari (Mac)</option><option value="file">Файл cookies.txt</option></select><div id="cookie-file-fields" hidden><label for="cookies-file" class="tiny">Полный путь к cookies.txt</label><input id="cookies-file" class="folder-input" type="text" placeholder="Путь к cookies.txt" spellcheck="false"><button id="pick-cookies" class="button update-button">Выбрать cookies.txt</button></div><button id="save-auth" class="button update-button">Сохранить доступ</button><p class="tiny">Сначала войдите на сайт в выбранном браузере. Если Chrome или Edge не отдают cookies, используйте cookies.txt. Пароль в приложение вводить не нужно.</p></section>
         <div class="privacy-note"><svg class="icon"><use href="#i-shield"/></svg><p>Видео и настройки хранятся<br>только на вашем компьютере.</p></div>
       </aside>
     </div>
   </main>
 
-  <footer><span>Меньше кнопок. Больше хорошего видео.</span><span>Батя качает <span id="app-version">1.0.1</span> <span class="footer-dot">·</span> Open source</span></footer>
+  <footer><span>Меньше кнопок. Больше хорошего видео.</span><span>Батя качает <span id="app-version">1.1.0</span> <span class="footer-dot">·</span> Open source</span></footer>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-<div id="closed" class="closed" hidden><div><span class="brand-mark"><svg class="icon"><use href="#i-check"/></svg></span><h1>До следующего видео!</h1><p>Приложение закрыто. Эту вкладку тоже можно закрыть.</p><p class="tiny">Чтобы вернуться, запустите Batya.exe.</p></div></div>
+<div id="closed" class="closed" hidden><div><span class="brand-mark"><svg class="icon"><use href="#i-check"/></svg></span><h1>До следующего видео!</h1><p>Приложение закрыто. Эту вкладку тоже можно закрыть.</p><p class="tiny">Чтобы вернуться, запустите приложение двойным кликом.</p></div></div>
 <template id="job-template"><article class="job"><div class="job-top"><span class="job-icon"><svg class="icon"><use href="#i-video"/></svg></span><div class="job-info"><h3 class="job-title"></h3><p class="job-meta"></p></div><span class="job-status"></span></div><div class="progress-region"><div class="progress-track" role="progressbar" aria-label="Прогресс загрузки" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill"></div></div><div class="progress-info"><span class="progress-detail"></span><span class="progress-percent"></span></div></div><p class="job-error"></p><div class="job-actions"></div></article></template>
 </body>
 </html>

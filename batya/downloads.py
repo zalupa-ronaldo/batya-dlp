@@ -17,13 +17,22 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from batya import __version__
-from batya.system import atomic_json, hidden_process_options, open_native, terminate_tree, tools_directory
+from batya.system import (
+    atomic_json,
+    external_environment,
+    hidden_process_options,
+    open_native,
+    terminate_tree,
+    tool_filename,
+    tools_directory,
+)
 from batya.updater import update_binary
 
 LOG = logging.getLogger(__name__)
 ACTIVE = {"queued", "starting", "downloading", "processing"}
 MEDIA = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".flac"}
 QUALITIES = {"1080", "720", "best", "audio"}
+BROWSERS = {"none", "chrome", "firefox", "edge", "brave", "safari", "file"}
 
 
 def validate_url(value: str) -> str:
@@ -72,6 +81,7 @@ class DownloadManager:
         data_dir.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.pending = queue.Queue()
+        self.playlist_pending = deque()
         self.stopping = threading.Event()
         self.process = None
         self.current_id = None
@@ -80,20 +90,42 @@ class DownloadManager:
         self.update = {"busy": False, "message": "", "error": False}
         self.version = "Проверяем…"
         self.jobs = []
-        self.settings = {"folder": str(Path.home() / "Downloads" / "Батя качает"), "quality": "1080"}
+        self.settings = {
+            "folder": str(Path.home() / "Downloads" / "Батя качает"),
+            "quality": "1080",
+            "browser": "none",
+            "cookies_file": "",
+        }
         self._load()
         self.command = command or self._command()
 
     def _command(self) -> list[str]:
-        bundled = tools_directory() / "yt-dlp.exe"
-        if os.name == "nt" and bundled.exists():
-            mutable = self.data_dir / "tools" / "yt-dlp.exe"
+        name = tool_filename("yt-dlp")
+        if sys.platform == "darwin" and getattr(sys, "frozen", False):
+            runtime = tools_directory().parent.parent / "Resources" / "yt-dlp-runtime"
+            if runtime.is_dir():
+                installed = self.data_dir / "tools/yt-dlp-runtime-initial"
+                installed.parent.mkdir(parents=True, exist_ok=True)
+                if not installed.exists():
+                    shutil.copytree(runtime, installed)
+                target = installed.parent / name
+                if not target.is_symlink() or not target.exists():
+                    link = target.with_name("yt-dlp.link")
+                    link.unlink(missing_ok=True)
+                    link.symlink_to(installed / name)
+                    os.replace(link, target)
+                return [str(target)]
+        bundled = tools_directory() / name
+        if bundled.exists():
+            mutable = self.data_dir / "tools" / name
             mutable.parent.mkdir(parents=True, exist_ok=True)
             if not mutable.exists():
                 shutil.copy2(bundled, mutable)
+            if os.name != "nt":
+                mutable.chmod(0o755)
             return [str(mutable)]
         if getattr(sys, "frozen", False):
-            raise RuntimeError("Не найден tools/yt-dlp.exe. Распакуйте ZIP-архив целиком.")
+            raise RuntimeError(f"Не найден tools/{name}. Распакуйте ZIP-архив целиком.")
         return [sys.executable, "-m", "yt_dlp"]
 
     def _load(self):
@@ -107,7 +139,7 @@ class DownloadManager:
             self.settings.update(
                 {k: v for k, v in state["settings"].items() if k in self.settings and isinstance(v, str)}
             )
-            self.jobs = [j for j in state.get("jobs", []) if isinstance(j, dict) and "id" in j][-200:]
+            self.jobs = [j for j in state.get("jobs", []) if isinstance(j, dict) and "id" in j][-20000:]
             for job in self.jobs:
                 if job.get("status") in ACTIVE:
                     job.update(status="interrupted", error="Приложение было закрыто. Нажмите «Повторить».")
@@ -117,6 +149,9 @@ class DownloadManager:
             self.jobs = []
 
     def _save(self):
+        finished = [j["id"] for j in self.jobs if j["status"] in {"completed", "error", "cancelled"}]
+        discard = set(finished[:-200])
+        self.jobs = [j for j in self.jobs if j["id"] not in discard]
         atomic_json(self.data_dir / "state.json", {"settings": self.settings, "jobs": self.jobs})
 
     def start(self):
@@ -153,12 +188,30 @@ class DownloadManager:
                 )
             )
 
-    def save_settings(self, folder: str, quality: str):
+    def save_settings(
+        self, folder: str, quality: str, browser: str | None = None, cookies_file: str | None = None
+    ):
         if quality not in QUALITIES:
             raise ValueError("Выберите качество из списка.")
         path = writable_folder(folder)
         with self.lock:
-            self.settings = {"folder": str(path), "quality": quality}
+            selected = self.settings["browser"] if browser is None else browser
+            cookie_path = self.settings["cookies_file"] if cookies_file is None else cookies_file.strip()
+            if selected not in BROWSERS:
+                raise ValueError("Выберите браузер из списка.")
+            if selected == "safari" and sys.platform != "darwin":
+                raise ValueError("Safari доступен только на Mac.")
+            if selected == "file":
+                p = Path(cookie_path).expanduser()
+                if not p.is_absolute() or not p.is_file():
+                    raise ValueError("Укажите полный путь к существующему файлу cookies.txt.")
+                cookie_path = str(p.resolve())
+            self.settings = {
+                "folder": str(path),
+                "quality": quality,
+                "browser": selected,
+                "cookies_file": cookie_path,
+            }
             self._save()
         return self.settings.copy()
 
@@ -171,8 +224,8 @@ class DownloadManager:
                 raise ValueError("Приложение закрывается.")
             if self.update["busy"]:
                 raise ValueError("Дождитесь завершения обновления yt-dlp.")
-            if sum(j["status"] in ACTIVE for j in self.jobs) >= 20:
-                raise ValueError("В очереди уже 20 видео. Дождитесь завершения загрузок.")
+            if sum(j["status"] in ACTIVE and not j.get("playlist_url") for j in self.jobs) >= 20:
+                raise ValueError("В очереди уже 20 ссылок. Дождитесь завершения загрузок.")
             folder = writable_folder(self.settings["folder"])
             job = {
                 "id": uuid.uuid4().hex,
@@ -189,12 +242,9 @@ class DownloadManager:
                 "filename": None,
                 "created": time.time(),
                 "error": "",
+                "resolved": False,
             }
             self.jobs.append(job)
-            if len(self.jobs) > 200:
-                done = next((j for j in self.jobs if j["status"] not in ACTIVE), None)
-                if done:
-                    self.jobs.remove(done)
             self._save()
             self.pending.put(job["id"])
             return job.copy()
@@ -286,6 +336,8 @@ class DownloadManager:
             "3",
             "--fragment-retries",
             "3",
+            "--http-chunk-size",
+            "10M",
             "--cache-dir",
             str(self.data_dir / "cache"),
             "--progress-template",
@@ -299,12 +351,13 @@ class DownloadManager:
             "--output",
             str(Path(job["folder"]) / "%(title).140B [%(id)s].%(ext)s"),
         ]
-        ffmpeg = tools_directory() / "ffmpeg.exe"
-        deno = tools_directory() / "deno.exe"
+        ffmpeg = tools_directory() / tool_filename("ffmpeg")
+        deno = tools_directory() / tool_filename("deno")
         if ffmpeg.exists():
             args += ["--ffmpeg-location", str(ffmpeg.parent)]
         if deno.exists():
             args += ["--js-runtimes", f"deno:{deno}"]
+        args += self._authentication()
         if job["quality"] == "audio":
             args += ["--extract-audio", "--audio-format", "mp3", "--audio-quality", "192K"]
         else:
@@ -314,6 +367,106 @@ class DownloadManager:
             args += ["--format", formats, "--merge-output-format", "mp4", "--remux-video", "mp4"]
         return args + ["--", job["url"]]
 
+    def _authentication(self) -> list[str]:
+        with self.lock:
+            browser = self.settings.get("browser", "none")
+            filename = self.settings.get("cookies_file", "")
+        if browser == "file":
+            # yt-dlp may refresh this user-selected cookie jar; it never enters state.json or logs.
+            return ["--cookies", filename]
+        return ["--cookies-from-browser", browser] if browser in BROWSERS - {"none", "file"} else []
+
+    def _resolve(self, job: dict):
+        if job.get("resolved"):
+            return
+        args = self.command + [
+            "--ignore-config",
+            "--no-plugin-dirs",
+            "--flat-playlist",
+            "--dump-single-json",
+            "--yes-playlist",
+            "--skip-download",
+            "--no-warnings",
+            "--encoding",
+            "utf-8",
+            "--socket-timeout",
+            "20",
+            "--extractor-retries",
+            "2",
+        ]
+        deno = tools_directory() / tool_filename("deno")
+        if deno.exists():
+            args += ["--js-runtimes", f"deno:{deno}"]
+        args += self._authentication() + ["--", job["url"]]
+        with self.lock:
+            if job["status"] == "cancelled" or self.stopping.is_set():
+                return
+            process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                encoding="utf-8",
+                errors="replace",
+                env=external_environment(),
+                **hidden_process_options(),
+            )
+            self.process = process
+        metadata = None
+        tail = deque(maxlen=8)
+        for line in process.stdout:
+            if len(line) > 50_000_000:
+                terminate_tree(process)
+                raise ValueError("Слишком большой плейлист. Попробуйте ссылку на его часть.")
+            if line.startswith("{"):
+                metadata = json.loads(line)
+            elif line.strip():
+                tail.append(line.strip())
+        code = process.wait()
+        with self.lock:
+            if job["status"] == "cancelled" or self.stopping.is_set():
+                return
+            if code or not isinstance(metadata, dict):
+                raise ValueError("\n".join(tail)[-2500:] or "Не удалось прочитать ссылку.")
+            job["resolved"] = True
+            if metadata.get("_type") not in {"playlist", "multi_video"}:
+                if metadata.get("title"):
+                    job["title"] = str(metadata["title"])[:500]
+                return
+            entries = [e for e in (metadata.get("entries") or []) if isinstance(e, dict)]
+            children = []
+            for index, entry in enumerate(entries, 1):
+                url = entry.get("webpage_url") or entry.get("url") or ""
+                if not url.startswith(("https://", "http://")) and entry.get("ie_key") == "Youtube":
+                    url = "https://www.youtube.com/watch?v=" + str(entry.get("id", ""))
+                try:
+                    url = validate_url(url)
+                except ValueError:
+                    continue
+                child = {
+                    **job,
+                    "id": uuid.uuid4().hex,
+                    "url": url,
+                    "status": "queued",
+                    "title": str(entry.get("title") or "Видео")[:500],
+                    "resolved": True,
+                    "playlist_url": job["url"],
+                    "playlist_title": str(metadata.get("title") or "Плейлист")[:300],
+                    "playlist_index": index,
+                    "playlist_count": len(entries),
+                    "created": time.time(),
+                }
+                children.append(child)
+            if not children:
+                raise ValueError("В плейлисте нет доступных видео.")
+            first = children.pop(0)
+            first["id"] = job["id"]
+            first["status"] = "starting"
+            position = self.jobs.index(job)
+            job.update(first)
+            self.jobs[position + 1 : position + 1] = children
+            self.playlist_pending.extend(child["id"] for child in children)
+            self._save()
+
     def _worker(self):
         try:
             result = subprocess.run(
@@ -322,6 +475,7 @@ class DownloadManager:
                 encoding="utf-8",
                 errors="replace",
                 timeout=30,
+                env=external_environment(),
                 **hidden_process_options(),
             )
             with self.lock:
@@ -330,7 +484,7 @@ class DownloadManager:
             with self.lock:
                 self.version = "Не найден"
         while not self.stopping.is_set():
-            job_id = self.pending.get()
+            job_id = self.playlist_pending.popleft() if self.playlist_pending else self.pending.get()
             if job_id is None or self.stopping.is_set():
                 break
             with self.lock:
@@ -339,7 +493,14 @@ class DownloadManager:
                     continue
                 job["status"] = "starting"
                 self.current_id = job_id
-            self._download(job)
+            try:
+                self._resolve(job)
+                self._download(job)
+            except Exception as exc:
+                LOG.exception("Could not resolve URL")
+                with self.lock:
+                    if job["status"] != "cancelled":
+                        job.update(status="error", error=self._friendly_error(str(exc)))
             with self.lock:
                 self.current_id = None
                 self.process = None
@@ -374,19 +535,41 @@ class DownloadManager:
         except (ValueError, TypeError, AttributeError):
             LOG.warning("Unrecognized yt-dlp event: %s", prefix)
 
-    def _download(self, job: dict):
+    @staticmethod
+    def _friendly_error(details: str) -> str:
+        text = details.lower()
+        if "403" in text or "sign in" in text or "cookies" in text or "login" in text:
+            return (
+                "Сайт ограничил доступ к видео. В блоке «Доступ к сайтам» выберите браузер, "
+                "в котором видео открывается, или файл cookies.txt, затем нажмите «Повторить».\n\n" + details
+            )
+        return details or "Не удалось скачать видео. Проверьте ссылку и интернет."
+
+    def _download(self, job: dict, attempt: int = 0):
         tail = deque(maxlen=12)
         try:
             with self.lock:
                 if job["status"] == "cancelled" or self.stopping.is_set():
                     return
+                arguments = self._arguments(job)
+                if attempt:
+                    arguments[len(self.command) : len(self.command)] = ["--force-ipv4"]
+                    if "--format" in arguments:
+                        index = arguments.index("--format") + 1
+                        cap = "" if job["quality"] == "best" else f"[height<={job['quality']}]"
+                        arguments[index] = (
+                            f"b{cap}[vcodec^=avc1][protocol^=m3u8]/"
+                            f"bv{cap}[vcodec^=avc1][protocol^=m3u8]+ba/"
+                            f"b{cap}[protocol^=m3u8]/bv{cap}[protocol^=m3u8]+ba/" + arguments[index]
+                        )
                 process = subprocess.Popen(
-                    self._arguments(job),
+                    arguments,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
+                    env=external_environment(),
                     **hidden_process_options(),
                 )
                 self.process = process
@@ -397,14 +580,27 @@ class DownloadManager:
                 elif line:
                     tail.append(line)
             result = process.wait()
+            details = "\n".join(tail)[-3000:]
+            with self.lock:
+                retry = (
+                    result != 0
+                    and attempt < 2
+                    and not self.stopping.is_set()
+                    and job["status"] != "cancelled"
+                    and "403" in details
+                )
+                if retry:
+                    job.update(status="starting", note="Обновляем ссылку и продолжаем загрузку…")
+            if retry:
+                self._download(job, attempt=attempt + 1)
+                return
             with self.lock:
                 if job["status"] == "cancelled" or self.stopping.is_set():
                     return
                 if result != 0:
-                    details = "\n".join(tail)[-3000:]
                     job.update(
                         status="error",
-                        error=details or "Не удалось скачать видео. Проверьте ссылку и интернет.",
+                        error=self._friendly_error(details),
                     )
                 elif not job["filename"] or not Path(job["filename"]).is_file():
                     job.update(status="error", error="Загрузка завершилась, но готовый файл не найден.")

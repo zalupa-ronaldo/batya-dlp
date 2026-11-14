@@ -14,6 +14,8 @@ from pathlib import Path
 def data_directory() -> Path:
     if os.environ.get("BATYA_DATA_DIR"):
         return Path(os.environ["BATYA_DATA_DIR"]).resolve()
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "BatyaDLP"
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share"))
     return base / "BatyaDLP"
 
@@ -24,8 +26,28 @@ def resource_directory() -> Path:
 
 def tools_directory() -> Path:
     if getattr(sys, "frozen", False):
+        if sys.platform == "darwin":
+            return resource_directory() / "tools"
         return Path(sys.executable).parent / "tools"
     return resource_directory() / "tools"
+
+
+def tool_filename(name: str) -> str:
+    if os.name == "nt":
+        return name + ".exe"
+    return "yt-dlp_macos" if name == "yt-dlp" and sys.platform == "darwin" else name
+
+
+def external_environment() -> dict:
+    """Do not pass the frozen app's dynamic loader settings to independent tools."""
+    env = os.environ.copy()
+    for key in ("DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"):
+        original = env.pop(key + "_ORIG", None)
+        if original is None:
+            env.pop(key, None)
+        else:
+            env[key] = original
+    return env
 
 
 def atomic_json(path: Path, value) -> None:
@@ -138,3 +160,48 @@ try {
             raise ValueError("Не удалось открыть окно выбора папки. Укажите путь вручную.")
         return None
     return result.stdout.strip().lstrip("\ufeff") or None
+
+
+def select_cookie_file() -> str | None:
+    if os.name == "nt":
+        script = """
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.OpenFileDialog
+$d.Title = 'Выберите cookies.txt'
+$d.Filter = 'Cookies (*.txt)|*.txt|Все файлы (*.*)|*.*'
+try { if ($d.ShowDialog() -eq 'OK') { [Console]::Write($d.FileName) } }
+finally { $d.Dispose() }
+"""
+        result = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-STA",
+                "-EncodedCommand",
+                base64.b64encode(script.encode("utf-16-le")).decode("ascii"),
+            ],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            **hidden_process_options(),
+        )
+    elif sys.platform == "darwin":
+        result = subprocess.run(
+            ["osascript", "-e", 'POSIX path of (choose file with prompt "Выберите cookies.txt")'],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    elif shutil.which("zenity"):
+        result = subprocess.run(
+            ["zenity", "--file-selection", "--title=Выберите cookies.txt"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    else:
+        raise ValueError("Укажите путь к cookies.txt вручную.")
+    return result.stdout.strip().lstrip("\ufeff") if result.returncode == 0 else None

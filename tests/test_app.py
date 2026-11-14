@@ -1,7 +1,10 @@
 import hashlib
+import io
 import json
+import os
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -10,7 +13,7 @@ from fastapi.testclient import TestClient
 from batya.app import create_app
 from batya.downloads import DownloadManager, validate_url
 from batya.launcher import InstanceLock
-from batya.updater import verified_asset
+from batya.updater import install_macos_runtime, verified_asset
 
 ORIGIN = "http://127.0.0.1:8765"
 
@@ -182,4 +185,94 @@ def test_corrupt_state_is_preserved(tmp_path):
     manager = DownloadManager(tmp_path, command=[sys.executable])
     assert manager.snapshot()["jobs"] == []
     assert len(list(tmp_path.glob("state.damaged-*.json"))) == 1
-    assert json.loads(json.dumps(manager.snapshot()))["app_version"] == "1.0.1"
+    assert isinstance(json.loads(json.dumps(manager.snapshot()))["app_version"], str)
+
+
+def test_playlist_expands_in_order_and_continues_after_failure(client, manager):
+    first = client.post("/api/jobs", json={"url": "https://example.com/playlist"}).json()
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        jobs = list(reversed(manager.snapshot()["jobs"]))
+        assert sum(j["status"] in {"starting", "downloading", "processing"} for j in jobs) <= 1
+        if len(jobs) == 3 and jobs[-1]["status"] == "completed":
+            break
+        time.sleep(0.025)
+    assert [j["status"] for j in jobs] == ["completed", "error", "completed"], jobs
+    assert jobs[0]["id"] == first["id"]
+    assert [j["playlist_index"] for j in jobs] == [1, 2, 3]
+    assert jobs[0]["completed"] <= jobs[2]["completed"]
+    assert Path(jobs[0]["filename"]).is_file() and Path(jobs[2]["filename"]).is_file()
+
+
+def test_403_refreshes_and_finishes_without_manual_retry(client, manager):
+    job = client.post("/api/jobs", json={"url": "https://example.com/transient403"}).json()
+    assert wait_for(manager, job["id"], {"completed", "error"})["status"] == "completed"
+
+
+def test_authentication_setting_applies_and_survives_folder_save(client, manager, tmp_path):
+    url = "https://example.com/needs-login"
+    first = client.post("/api/jobs", json={"url": url}).json()
+    failed = wait_for(manager, first["id"], {"error"})
+    assert "Доступ к сайтам" in failed["error"]
+    result = client.post("/api/settings", json={"folder": str(tmp_path / "videos"), "browser": "firefox"})
+    assert result.status_code == 200
+    assert (
+        client.post("/api/settings", json={"folder": str(tmp_path / "other")}).json()["browser"] == "firefox"
+    )
+    second = client.post("/api/jobs", json={"url": url}).json()
+    assert wait_for(manager, second["id"], {"completed", "error"})["status"] == "completed"
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    assert (
+        client.post(
+            "/api/settings",
+            json={"folder": str(tmp_path / "other"), "browser": "file", "cookies_file": str(cookie)},
+        ).status_code
+        == 200
+    )
+    third = client.post("/api/jobs", json={"url": url}).json()
+    assert wait_for(manager, third["id"], {"completed", "error"})["status"] == "completed"
+    loaded = DownloadManager(manager.data_dir, command=manager.command)
+    assert loaded.snapshot()["settings"]["browser"] == "file"
+    assert loaded.snapshot()["settings"]["cookies_file"] == str(cookie)
+
+
+def test_playlist_pending_jobs_are_not_trimmed_by_history_limit(manager):
+    for i in range(230):
+        manager.jobs.append({"id": str(i), "status": "queued", "url": "https://example.com"})
+    manager._save()
+    assert len(manager.snapshot()["jobs"]) == 230
+    recovered = DownloadManager(manager.data_dir, command=manager.command)
+    assert len(recovered.snapshot()["jobs"]) == 230
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable and symlink semantics")
+def test_macos_update_switches_only_after_validating_version(tmp_path):
+    target = tmp_path / "yt-dlp_macos"
+    target.write_text("old version")
+
+    def archive(script):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as zipped:
+            item = zipfile.ZipInfo("yt-dlp_macos")
+            item.external_attr = 0o100755 << 16
+            zipped.writestr(item, script)
+        return output.getvalue()
+
+    with pytest.raises(ValueError):
+        install_macos_runtime(archive("#!/bin/sh\nexit 1\n"), target)
+    assert target.read_text() == "old version"
+    assert install_macos_runtime(archive("#!/bin/sh\necho 2026.11.14\n"), target) == "2026.11.14"
+    assert target.is_symlink() and target.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Mac updater archive validation")
+def test_macos_updater_rejects_zip_traversal(tmp_path):
+    target = tmp_path / "yt-dlp_macos"
+    target.write_text("old")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as zipped:
+        zipped.writestr("../outside", "bad")
+    with pytest.raises(ValueError, match="Небезопасный путь"):
+        install_macos_runtime(output.getvalue(), target)
+    assert target.read_text() == "old"

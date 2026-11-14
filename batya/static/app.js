@@ -31,7 +31,7 @@ async function api(path, data) {
       cache: 'no-store',
     });
   } catch {
-    throw new Error('Нет связи с приложением. Запустите Batya.exe ещё раз.');
+    throw new Error('Нет связи с приложением. Запустите приложение ещё раз.');
   }
   const result = await response.json();
   if (!response.ok) {
@@ -94,7 +94,7 @@ function renderJobs() {
     $('.job-title', row).title = job.title;
     let host = '';
     try {host = new URL(job.url).hostname.replace(/^www\./, '');} catch { /* Old history may contain an invalid URL. */ }
-    $('.job-meta', row).textContent = `${qualityLabels[job.quality] || ''} · ${host}`;
+    $('.job-meta', row).textContent = `${qualityLabels[job.quality] || ''} · ${host}${job.playlist_title ? ' · ' + job.playlist_title + ' · ' + job.playlist_index + '/' + job.playlist_count : ''}`;
     $('.job-status', row).textContent = statusLabels[job.status] || job.status;
     const active = activeStatuses.has(job.status);
     $('.progress-region', row).hidden = !active;
@@ -104,7 +104,7 @@ function renderJobs() {
     $('.progress-fill', row).style.width = `${percent}%`;
     const details = [];
     if (job.status === 'queued') details.push('Начнём после предыдущего видео');
-    else if (job.status === 'starting') details.push('Проверяем ссылку и доступные форматы…');
+    else if (job.status === 'starting') details.push(job.note || 'Проверяем ссылку и доступные форматы…');
     else if (job.status === 'processing') details.push('Готовим видео для просмотра. Ещё немного…');
     else {
       if (job.downloaded) details.push(`${bytes(job.downloaded)}${job.total ? ' из ' + bytes(job.total) : ''}`);
@@ -150,6 +150,9 @@ async function refresh() {
     $('#folder').value = state.settings.folder;
     $('#folder').title = state.settings.folder;
     $('#quality').value = state.settings.quality;
+    $('#browser').value = state.settings.browser || 'none';
+    $('#cookies-file').value = state.settings.cookies_file || '';
+    $('#cookie-file-fields').hidden = $('#browser').value !== 'file';
     initialized = true;
   }
   $('#app-version').textContent = state.app_version;
@@ -187,7 +190,7 @@ $('#download-form').addEventListener('submit', async event => {
     $('#url').value = '';
     filter = 'all'; updateFilters();
     await refresh();
-    toast('Видео добавлено в очередь');
+    toast('Ссылка добавлена в очередь');
   } catch (error) {toast(error.message, true);} finally {element.disabled = false;}
 });
 
@@ -219,6 +222,17 @@ bind('#pick-folder', async () => {
   if (result.folder) {$('#folder').value = result.folder; await saveFolder();}
 });
 bind('#open-folder', () => api('folder/open', {}));
+$('#browser').addEventListener('change', () => {$('#cookie-file-fields').hidden = $('#browser').value !== 'file';});
+bind('#save-auth', async () => {
+  if (!state) return;
+  state.settings = await api('settings', {folder: state.settings.folder, quality: $('#quality').value,
+    browser: $('#browser').value, cookies_file: $('#cookies-file').value.trim()});
+  toast('Доступ сохранён. Можно повторить загрузку.');
+});
+bind('#pick-cookies', async () => {
+  const result = await api('cookies/pick', {});
+  if (result.file) $('#cookies-file').value = result.file;
+});
 bind('#update', async () => {await api('update', {}); await refresh();});
 bind('#quit', async () => {
   const busy = state && (state.jobs.some(job => activeStatuses.has(job.status)) || state.update.busy);

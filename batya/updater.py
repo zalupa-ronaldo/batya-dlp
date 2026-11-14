@@ -1,17 +1,22 @@
 """Download only official yt-dlp assets, verify SHA-256 before atomic replacement."""
 
 import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
+import sys
+import tempfile
 import urllib.request
-from pathlib import Path
+import zipfile
+from pathlib import Path, PurePosixPath
 
 import certifi
 
-from batya.system import hidden_process_options
+from batya.system import external_environment, hidden_process_options, tool_filename
 
 RELEASE_API = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 HEADERS = {"User-Agent": "BatyaDLP/1.0", "Accept": "application/vnd.github+json"}
@@ -46,8 +51,9 @@ def verified_asset(content: bytes, sums: str, name: str) -> None:
 
 
 def update_binary(target: Path, report) -> str:
-    if os.name != "nt":
+    if os.name != "nt" and sys.platform != "darwin":
         raise ValueError("В режиме разработки обновите yt-dlp командой: pip install -U yt-dlp[default]")
+    name = "yt-dlp_macos.zip" if sys.platform == "darwin" else tool_filename("yt-dlp")
     report("Проверяем новую версию…")
     release = json.loads(fetch(RELEASE_API))
     tag = release["tag_name"]
@@ -56,19 +62,34 @@ def update_binary(target: Path, report) -> str:
     base = f"https://github.com/yt-dlp/yt-dlp/releases/download/{tag}/"
     sums = fetch(base + "SHA2-256SUMS").decode("utf-8")
     report(f"Скачиваем yt-dlp {tag}…")
-    content = fetch(base + "yt-dlp.exe", limit=80_000_000)
-    verified_asset(content, sums, "yt-dlp.exe")
-    if not content.startswith(b"MZ"):
-        raise ValueError("Обновление не является Windows-приложением.")
-    staged = target.with_name("yt-dlp.update.exe")
+    content = fetch(base + name, limit=100_000_000)
+    verified_asset(content, sums, name)
+    if sys.platform == "darwin":
+        return install_macos_runtime(content, target)
+    headers = (
+        (b"MZ",)
+        if os.name == "nt"
+        else (
+            b"\xcf\xfa\xed\xfe",
+            b"\xfe\xed\xfa\xcf",
+            b"\xca\xfe\xba\xbe",
+            b"\xca\xfe\xba\xbf",
+        )
+    )
+    if not content.startswith(headers):
+        raise ValueError("Обновление не является приложением для вашей системы.")
+    staged = target.with_name("yt-dlp.update.exe" if os.name == "nt" else "yt-dlp.update")
     try:
         staged.write_bytes(content)
+        if os.name != "nt":
+            staged.chmod(0o755)
         checked = subprocess.run(
             [str(staged), "--ignore-config", "--version"],
             capture_output=True,
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            env=external_environment(),
             **hidden_process_options(),
         )
         version = checked.stdout.strip()
@@ -78,3 +99,50 @@ def update_binary(target: Path, report) -> str:
         return version
     finally:
         staged.unlink(missing_ok=True)
+
+
+def install_macos_runtime(content: bytes, target: Path) -> str:
+    """Verify an immutable onedir runtime, then atomically switch the executable symlink."""
+    runtime = Path(tempfile.mkdtemp(prefix="yt-dlp-runtime-", dir=target.parent))
+    link = target.with_name("yt-dlp.link")
+    installed = False
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zipped:
+            for item in zipped.infolist():
+                path = PurePosixPath(item.filename)
+                if (
+                    path.is_absolute()
+                    or ".." in path.parts
+                    or ((item.external_attr >> 16) & 0o170000) == 0o120000
+                ):
+                    raise ValueError("Небезопасный путь в архиве yt-dlp.")
+                destination = runtime.joinpath(*path.parts)
+                if item.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(zipped.read(item))
+                    destination.chmod(0o755 if (item.external_attr >> 16) & 0o111 else 0o644)
+        binary = runtime / "yt-dlp_macos"
+        binary.chmod(0o755)
+        checked = subprocess.run(
+            [str(binary), "--ignore-config", "--no-plugin-dirs", "--version"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            env=external_environment(),
+            **hidden_process_options(),
+        )
+        version = checked.stdout.strip()
+        if checked.returncode or not re.fullmatch(r"[A-Za-z0-9._+-]+", version):
+            raise ValueError("Новая версия не запускается. Старый yt-dlp сохранён.")
+        link.unlink(missing_ok=True)
+        link.symlink_to(binary)
+        os.replace(link, target)
+        installed = True
+        return version
+    finally:
+        link.unlink(missing_ok=True)
+        if not installed:
+            shutil.rmtree(runtime, ignore_errors=True)
