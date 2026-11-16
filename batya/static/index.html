@@ -45,13 +45,13 @@
     <div class="workspace">
       <div class="main-column">
         <section class="download-card" aria-labelledby="download-heading">
-          <div class="section-kicker"><span class="step-number">1</span><h2 id="download-heading">Ссылка на видео</h2></div>
+          <div class="section-kicker"><span class="step-number">1</span><h2 id="download-heading">Ссылка на видео, плейлист или канал</h2></div>
           <form id="download-form">
-            <label class="sr-only" for="url">Ссылка на видео</label>
+            <label class="sr-only" for="url">Ссылка на видео, плейлист или канал</label>
             <div class="url-field"><svg class="icon"><use href="#i-link"/></svg><input id="url" name="url" type="url" placeholder="https://youtube.com/watch?v=…" required autocomplete="off" spellcheck="false" maxlength="8192"><button id="paste" class="paste-button" type="button">Вставить</button></div>
             <div class="download-bottom"><div class="quality-field"><label for="quality">Качество</label><select id="quality" name="quality"><option value="1080">1080p · Рекомендуем</option><option value="720">720p · Меньше размер</option><option value="best">Максимальное</option><option value="audio">Только звук · MP3</option></select></div><button class="button primary" type="submit" id="download-button"><svg class="icon"><use href="#i-download"/></svg><span>Скачать видео</span></button></div>
           </form>
-          <p class="form-hint">YouTube, VK, Rutube и другие сайты, которые поддерживает yt-dlp.<br>Ссылка на плейлист? Ролики автоматически скачаются по очереди.</p>
+          <p class="form-hint">Вставьте ссылку на плейлист или YouTube-канал, и доступные ролики скачаются по очереди.</p>
         </section>
 
         <section class="library" aria-labelledby="library-heading">
@@ -75,7 +75,7 @@
     </div>
   </main>
 
-  <footer><span>Меньше кнопок. Больше хорошего видео.</span><span>Батя качает <span id="app-version">1.1.3</span> <span class="footer-dot">·</span> Open source</span></footer>
+  <footer><span>Меньше кнопок. Больше хорошего видео.</span><span>Батя качает <span id="app-version">1.2.0</span> <span class="footer-dot">·</span> Open source</span></footer>
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <div id="closed" class="closed" hidden><div><span class="brand-mark"><svg class="icon"><use href="#i-check"/></svg></span><h1>До следующего видео!</h1><p>Приложение закрыто. Эту вкладку тоже можно закрыть.</p><p class="tiny">Чтобы вернуться, запустите приложение двойным кликом.</p></div></div>

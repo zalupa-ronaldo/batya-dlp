@@ -224,6 +224,27 @@ def test_playlist_expands_in_order_and_continues_after_failure(client, manager):
     assert Path(jobs[0]["filename"]).is_file() and Path(jobs[2]["filename"]).is_file()
 
 
+def test_bare_channel_flattens_tabs_skips_unfinished_streams_and_deduplicates(client, manager):
+    url = "https://www.youtube.com/@testchannel"
+    first = client.post("/api/jobs", json={"url": url}).json()
+    wait_for(manager, first["id"], {"completed", "error"})
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        jobs = list(reversed(manager.snapshot()["jobs"]))
+        assert sum(j["status"] in {"starting", "downloading", "processing"} for j in jobs) <= 1
+        if all(j["status"] not in {"queued", "starting", "downloading", "processing"} for j in jobs):
+            break
+        time.sleep(0.025)
+    assert [j["url"] for j in jobs] == [
+        f"https://www.youtube.com/watch?v={video_id}"
+        for video_id in ("AAAAAAAAAAA", "CCCCCCCCCCC", "BBBBBBBBBBB")
+    ]
+    assert [j["playlist_index"] for j in jobs] == [1, 2, 3]
+    assert all(j["playlist_count"] == 3 and j["playlist_title"] == "Тестовый канал" for j in jobs)
+    assert all(j["status"] == "completed" and Path(j["filename"]).is_file() for j in jobs)
+    assert [j["completed"] for j in jobs] == sorted(j["completed"] for j in jobs)
+
+
 def test_403_refreshes_and_finishes_without_manual_retry(client, manager):
     job = client.post("/api/jobs", json={"url": "https://example.com/transient403"}).json()
     assert wait_for(manager, job["id"], {"completed", "error"})["status"] == "completed"

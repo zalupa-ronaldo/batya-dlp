@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -34,6 +35,52 @@ ACTIVE = {"queued", "starting", "downloading", "processing"}
 MEDIA = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mp3", ".m4a", ".opus", ".ogg", ".wav", ".flac"}
 QUALITIES = {"1080", "720", "best", "audio"}
 BROWSERS = {"none", "chrome", "firefox", "edge", "brave", "safari", "file"}
+COLLECTION_TYPES = {"playlist", "multi_video"}
+
+
+def is_youtube_channel(url: str) -> bool:
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    return (host == "youtube.com" or host.endswith(".youtube.com")) and bool(
+        re.fullmatch(r"/(?:@[^/]+|(?:channel|c|user)/[^/]+)/?", parsed.path)
+    )
+
+
+def collection_entries(collection: dict) -> Iterator[dict]:
+    for entry in collection.get("entries") or ():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("_type") in COLLECTION_TYPES:
+            yield from collection_entries(entry)
+        else:
+            yield entry
+
+
+def collection_videos(collection: dict, channel: bool) -> Iterator[tuple[str, str]]:
+    seen = set()
+    for entry in collection_entries(collection):
+        if channel and entry.get("live_status") in {"is_live", "is_upcoming"}:
+            continue
+        video_id = entry.get("id")
+        if (
+            entry.get("ie_key") == "Youtube"
+            and isinstance(video_id, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id)
+        ):
+            url = f"https://www.youtube.com/watch?v={video_id}"
+        else:
+            url = entry.get("webpage_url") or entry.get("url")
+        if not isinstance(url, str):
+            continue
+        try:
+            url = validate_url(url)
+        except ValueError:
+            continue
+        if channel:
+            if url in seen:
+                continue
+            seen.add(url)
+        yield url, str(entry.get("title") or "Видео")[:500]
 
 
 def validate_url(value: str) -> str:
@@ -390,7 +437,9 @@ class DownloadManager:
             return "Не удалось прочитать cookies Chrome. Полностью закройте Chrome и попробуйте снова."
         if "could not find chrome cookies database" in message:
             return "Не найдена база cookies Chrome. Проверьте, что вы вошли на сайт в Chrome."
-        if "failed to decrypt with dpapi" in message or re.search(r"\bextracted 0 cookies from chrome\b", message):
+        if "failed to decrypt with dpapi" in message or re.search(
+            r"\bextracted 0 cookies from chrome\b", message
+        ):
             return "Сессия Chrome недоступна. Для входа используйте Firefox или файл cookies.txt."
         return ""
 
@@ -457,26 +506,20 @@ class DownloadManager:
             if code or not isinstance(metadata, dict):
                 raise ValueError("\n".join(tail)[-2500:] or "Не удалось прочитать ссылку.")
             job["resolved"] = True
-            if metadata.get("_type") not in {"playlist", "multi_video"}:
+            if metadata.get("_type") not in COLLECTION_TYPES:
                 if metadata.get("title"):
                     job["title"] = str(metadata["title"])[:500]
                 return
-            entries = [e for e in (metadata.get("entries") or []) if isinstance(e, dict)]
+            channel = is_youtube_channel(job["url"])
+            entries = list(collection_videos(metadata, channel))
             children = []
-            for index, entry in enumerate(entries, 1):
-                url = entry.get("webpage_url") or entry.get("url") or ""
-                if not url.startswith(("https://", "http://")) and entry.get("ie_key") == "Youtube":
-                    url = "https://www.youtube.com/watch?v=" + str(entry.get("id", ""))
-                try:
-                    url = validate_url(url)
-                except ValueError:
-                    continue
+            for index, (url, title) in enumerate(entries, 1):
                 child = {
                     **job,
                     "id": uuid.uuid4().hex,
                     "url": url,
                     "status": "queued",
-                    "title": str(entry.get("title") or "Видео")[:500],
+                    "title": title,
                     "resolved": True,
                     "playlist_url": job["url"],
                     "playlist_title": str(metadata.get("title") or "Плейлист")[:300],
@@ -486,7 +529,9 @@ class DownloadManager:
                 }
                 children.append(child)
             if not children:
-                raise ValueError("В плейлисте нет доступных видео.")
+                raise ValueError(
+                    "На канале нет доступных записей." if channel else "В плейлисте нет доступных видео."
+                )
             first = children.pop(0)
             first["id"] = job["id"]
             first["status"] = "starting"

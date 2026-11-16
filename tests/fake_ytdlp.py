@@ -26,7 +26,43 @@ if "needs-login" in url and "--cookies-from-browser" not in sys.argv and "--cook
     print("ERROR: Sign in to confirm your age. Use cookies.", flush=True)
     raise SystemExit(1)
 if resolving:
-    if "playlist" in url:
+    if url == "https://www.youtube.com/@testchannel":
+        regular = {"ie_key": "Youtube", "id": "AAAAAAAAAAA", "title": "Видео", "url": "AAAAAAAAAAA"}
+        short = {
+            "ie_key": "Youtube",
+            "id": "BBBBBBBBBBB",
+            "title": "Shorts",
+            "url": "https://www.youtube.com/shorts/BBBBBBBBBBB",
+        }
+        replay = {
+            "ie_key": "Youtube",
+            "id": "CCCCCCCCCCC",
+            "title": "Запись эфира",
+            "live_status": "was_live",
+        }
+        print(
+            json.dumps(
+                {
+                    "_type": "playlist",
+                    "title": "Тестовый канал",
+                    "webpage_url": url,
+                    "entries": [
+                        {"_type": "playlist", "webpage_url": url + "/videos", "entries": [regular, None]},
+                        {
+                            "_type": "playlist",
+                            "webpage_url": url + "/streams",
+                            "entries": [
+                                {"ie_key": "Youtube", "id": "DDDDDDDDDDD", "live_status": "is_live"},
+                                {"ie_key": "Youtube", "id": "EEEEEEEEEEE", "live_status": "is_upcoming"},
+                                replay,
+                            ],
+                        },
+                        {"_type": "playlist", "webpage_url": url + "/shorts", "entries": [short, regular]},
+                    ],
+                }
+            )
+        )
+    elif "playlist" in url:
         print(
             json.dumps(
                 {
@@ -57,7 +93,7 @@ if "slow" in url:
 if "fail" in url:
     print("ERROR: video is unavailable", flush=True)
     raise SystemExit(1)
-path = folder / ("Тестовое видео [" + url.rsplit("/", 1)[-1] + "].mp4")
+path = folder / ("Тестовое видео [" + url.rsplit("/", 1)[-1].removeprefix("watch?v=") + "].mp4")
 path.write_bytes(b"fixture")
 print('BATYA_PROGRESS:{"downloaded_bytes":100,"total_bytes":100,"status":"finished"}', flush=True)
 print("BATYA_FILE:" + json.dumps(str(path)), flush=True)
