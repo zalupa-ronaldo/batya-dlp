@@ -4,15 +4,19 @@ import argparse
 import json
 import logging
 import os
+import re
 import socket
 import threading
 import time
 import webbrowser
+from contextlib import closing
+from http.client import HTTPConnection, HTTPException
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import uvicorn
 
+from batya import __version__
 from batya.app import create_app
 from batya.downloads import DownloadManager
 from batya.system import atomic_json, data_directory
@@ -52,16 +56,53 @@ class InstanceLock:
             self.file = None
 
 
-def _open_running(directory: Path, headless: bool):
-    for _ in range(30):
+def _version_number(version: str) -> tuple[int, ...]:
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("Unrecognized app version")
+    return tuple(map(int, version.split(".")))
+
+
+def _claim_instance(lock: InstanceLock, headless: bool) -> bool:
+    """Start when free, ask older versions to quit, or open the running version."""
+    deadline = time.monotonic() + 10
+    quitting_url = None
+    current = _version_number(__version__)
+    while time.monotonic() < deadline:
+        if lock.acquire():
+            return True
         try:
-            info = json.loads((directory / "instance.json").read_text(encoding="utf-8"))
-            if not headless:
-                webbrowser.open(info["url"])
-            return
-        except (OSError, ValueError, KeyError):
-            time.sleep(0.1)
-    raise RuntimeError("Приложение уже запускается. Попробуйте открыть его через несколько секунд.")
+            info = json.loads((lock.directory / "instance.json").read_text(encoding="utf-8"))
+            url = info["url"]
+            match = re.fullmatch(r"(http://127\.0\.0\.1:([0-9]{1,5}))/\?key=([A-Za-z0-9_-]{32,128})", url)
+            if not match or match[1] != info["origin"] or not 0 < int(match[2]) <= 65535:
+                raise ValueError("Invalid local instance address")
+            if url != quitting_url:
+                origin, port, key = match.groups()
+                headers = {"Cookie": f"batya_{port}={key}", "Origin": origin}
+                # Connect directly to loopback so a proxy or redirect cannot receive the key.
+                with closing(HTTPConnection("127.0.0.1", int(port), timeout=2)) as connection:
+                    connection.request("GET", "/api/state", headers=headers)
+                    response = connection.getresponse()
+                    if response.status != 200:
+                        raise ValueError("Cannot verify the running instance")
+                    running = _version_number(json.loads(response.read())["app_version"])
+                    if running >= current:
+                        if not headless:
+                            webbrowser.open(url)
+                        return False
+                    connection.request("POST", "/api/quit", body=b"{}", headers=headers)
+                    response = connection.getresponse()
+                    if response.status != 200:
+                        raise ValueError("The running instance could not close")
+                    quitting_url = url
+                    deadline = time.monotonic() + 45
+        except (OSError, HTTPException, ValueError, KeyError, TypeError):
+            # The owner may still be starting or may have closed between requests.
+            pass
+        time.sleep(0.1)
+    if quitting_url:
+        raise RuntimeError("Старая версия не успела закрыться. Подождите и снова запустите новый Batya.exe.")
+    raise RuntimeError("Не удалось связаться с запущенной версией. Закройте её и снова запустите Batya.exe.")
 
 
 def main():
@@ -71,16 +112,17 @@ def main():
     args = parser.parse_args()
     directory = data_directory()
     directory.mkdir(parents=True, exist_ok=True)
-    handler = RotatingFileHandler(directory / "app.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8")
-    logging.basicConfig(
-        handlers=[handler], level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
     lock = InstanceLock(directory)
-    if not lock.acquire():
-        _open_running(directory, args.headless)
-        return
     listener = None
     try:
+        if not _claim_instance(lock, args.headless):
+            return
+        handler = RotatingFileHandler(
+            directory / "app.log", maxBytes=1_000_000, backupCount=2, encoding="utf-8"
+        )
+        logging.basicConfig(
+            handlers=[handler], level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+        )
         manager = DownloadManager(directory)
         # Keep this socket bound until uvicorn takes it; no port discovery/rebind race.
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -129,10 +171,13 @@ def main():
         else:
             raise
     finally:
-        (directory / "instance.json").unlink(missing_ok=True)
-        if listener:
-            listener.close()
-        lock.close()
+        if lock.file is not None:
+            try:
+                (directory / "instance.json").unlink(missing_ok=True)
+                if listener:
+                    listener.close()
+            finally:
+                lock.close()
 
 
 if __name__ == "__main__":
